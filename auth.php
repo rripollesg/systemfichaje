@@ -4,6 +4,18 @@ ini_set('session.cookie_lifetime', 31536000); // 1 año en segundos
 ini_set('session.gc_maxlifetime', 31536000);
 session_start();
 
+// --- Obtener Variables de Entorno del Hosting (Render) ---
+// La plataforma de hosting (Render) proporciona estas variables
+$db_host = getenv('DB_HOST') ?: 'localhost'; // Usa getenv() o un fallback
+$db_name = getenv('DB_DATABASE') ?: 'systemfichaje';
+$db_user = getenv('DB_USER') ?: 'root';
+$db_pass = getenv('DB_PASSWORD') ?: 'usbw';
+
+// Detectar el driver (MySQL o PostgreSQL)
+// Render usa PostgreSQL; si usas un servicio externo puede ser MySQL
+$db_driver = getenv('DB_DRIVER') ?: 'pgsql'; // 'pgsql' para Render, 'mysql' para la mayoría de los hostings
+$db_charset = 'utf8mb4'; // Típico para MySQL
+
 // Verificar método de solicitud
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header("Location: login.php");
@@ -21,16 +33,32 @@ $usuario = trim($_POST['usuario']);
 $password = $_POST['password'];
 
 try {
+    // --- Configurar DSN (Data Source Name) basado en el driver ---
+    if ($db_driver === 'mysql') {
+        $dsn = "mysql:host=$db_host;dbname=$db_name;charset=$db_charset";
+    } elseif ($db_driver === 'pgsql') {
+        // Formato DSN para PostgreSQL
+        $dsn = "pgsql:host=$db_host;dbname=$db_name;user=$db_user;password=$db_pass";
+        $db_user = null; // PDO para pgsql lo maneja en el DSN
+        $db_pass = null;
+    } else {
+        throw new Exception("Driver de Base de Datos no soportado.");
+    }
+
     // Configurar conexión PDO
     $conn = new PDO(
-        "mysql:host=localhost;dbname=systemfichaje;charset=utf8mb4",
-        "root",
-        "usbw"
+        $dsn,
+        $db_user, // $db_user y $db_pass pueden ser null si ya están en el DSN
+        $db_pass,
+        [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_EMULATE_PREPARES => false,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ]
     );
-    $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    $conn->setAttribute(PDO::ATTR_EMULATE_PREPARES, false);
 
     // Buscar usuario en la base de datos
+    // NOTA: Esta consulta funciona perfectamente en PDO.
     $stmt = $conn->prepare("
         SELECT id, usuario, password, rol 
         FROM users 
@@ -40,7 +68,7 @@ try {
     $stmt->bindParam(':usuario', $usuario, PDO::PARAM_STR);
     $stmt->execute();
     
-    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    $user = $stmt->fetch(); // No necesitas PDO::FETCH_ASSOC, ya se puso como DEFAULT en las opciones
 
     // Verificar credenciales
     if ($user && password_verify($password, $user['password'])) {
@@ -72,13 +100,15 @@ try {
     }
     
 } catch (PDOException $e) {
-    // Registrar error en logs
-    error_log("Error de autenticación: " . $e->getMessage());
-    
-    // Redirección genérica para evitar revelar información
+    // Manejo de errores específicos de DB
+    error_log("Error de autenticación (DB): " . $e->getMessage());
     header("Location: login.php?error=1");
     exit;
-    
+} catch (Exception $e) {
+    // Manejo de errores generales (ej. driver no soportado)
+    error_log("Error de autenticación (General): " . $e->getMessage());
+    header("Location: login.php?error=1");
+    exit;
 } finally {
     // Cerrar conexión
     if (isset($conn)) {
