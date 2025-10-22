@@ -1,5 +1,5 @@
 # 1. Usar una imagen base oficial de PHP con Alpine
-FROM php:8.3-apache-alpine
+FROM php:8.3-apache
 
 # 2. Copiar todo tu código al directorio web del servidor
 COPY . /var/www/html/
